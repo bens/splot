@@ -6,21 +6,19 @@ module Tools.StatePlot ( renderEvents
                        , RenderConfiguration(..)
                        ) where
 
-import Control.Monad.State.Strict as ST
-import qualified Data.Map as M
-import Data.List
-
-import Data.Time
-
+import Control.Monad (when)
+import qualified Control.Monad.State.Strict as ST
 import qualified Data.ByteString.Char8 as S
-import Data.ByteString.Lex.Fractional
-import qualified Graphics.Rendering.Cairo as C
-import Data.Colour
-import Data.Colour.SRGB
-import Data.Colour.Names
+import Data.ByteString.Lex.Fractional (readDecimal)
 import Data.Char (isSpace)
-
-import Tools.ColorMap
+import Data.Colour (AlphaColour, Colour, alphaChannel, black, darken, opaque, over)
+import Data.Colour.Names (white, red)
+import Data.Colour.SRGB (RGB(RGB), sRGB, toSRGB)
+import Data.List (foldl')
+import qualified Data.Map as M
+import Data.Time (LocalTime, UTCTime(..), utc, localTimeToUTC, toModifiedJulianDay)
+import qualified Graphics.Rendering.Cairo as C
+import Tools.ColorMap (ColorMap, computeColor, prepareColorMap)
 
 data Event = Event { localTime :: !LocalTime, utcTime :: !UTCTime, track :: !S.ByteString, edge :: !Edge } deriving (Show)
 data Event' = Event' { msTime :: !Double, track' :: !S.ByteString, edge' :: !Edge } deriving (Show)
@@ -33,8 +31,8 @@ data Edge = Begin { color :: !S.ByteString }
 -- Text is enough for most purposes (|, o, <, >, ...) but potentially more can exist.
 data Glyph = GlyphText { text :: !S.ByteString } deriving (Show)
 
-data OutputGlyph = Bar {-# UNPACK #-} !Double !Double !S.ByteString 
-                 | ExpiredBar {-# UNPACK #-} !Double !Double !S.ByteString 
+data OutputGlyph = Bar {-# UNPACK #-} !Double !Double !S.ByteString
+                 | ExpiredBar {-# UNPACK #-} !Double !Double !S.ByteString
                  | OutPulse {-# UNPACK #-} !Double !Glyph !S.ByteString deriving (Show)
 
 parse :: (S.ByteString -> (LocalTime, S.ByteString)) -> S.ByteString -> Event
@@ -55,6 +53,7 @@ parse parseTime s = Event { localTime = ts, utcTime = localTimeToUTC utc ts, tra
               text = S.tail text0
     trim = fst . S.spanEnd isSpace
 
+grayStr :: S.ByteString
 grayStr = S.pack "gray"
 
 {-# INLINE diffToMillis #-}
@@ -81,14 +80,18 @@ data RenderConfiguration = RenderConf {
 
 data TickSize = LargeTick | SmallTick
 
-newtype RenderState s a = RenderState { runRenderState :: StateT s C.Render a } deriving (Functor,Applicative,Monad, MonadState s)
+newtype RenderState s a = RenderState { runRenderState :: ST.StateT s C.Render a }
+  deriving (Functor, Applicative, Monad, ST.MonadState s)
 
 type CProgram = (Double, Double) -> C.Render ()
 
 liftR :: C.Render () -> RenderState s ()
-liftR r = RenderState $ lift r
+liftR r = RenderState $ ST.lift r
 
+colourChannel :: AlphaColour Double -> Colour Double
 colourChannel c = darken (recip (alphaChannel c)) (c `over` black)
+
+setSourceColor :: AlphaColour Double -> C.Render ()
 setSourceColor c = let (RGB r g b) = toSRGB $ colourChannel c
                    in C.setSourceRGBA r g b (alphaChannel c)
 
@@ -96,6 +99,7 @@ fillRect, strokeLine :: Double -> Double -> Double -> Double -> C.Render ()
 fillRect   !x1 !y1 !x2 !y2 = C.rectangle x1 y1 (x2-x1) (y2-y1) >> C.fill
 strokeLine !x1 !y1 !x2 !y2 = C.moveTo x1 y1 >> C.lineTo x2 y2 >> C.stroke
 
+lineStyle :: [Double] -> AlphaColour Double -> C.Render ()
 lineStyle dashes c = do
   C.setLineWidth 1
   C.setDash dashes 0
@@ -104,15 +108,15 @@ lineStyle dashes c = do
   setSourceColor c
 
 renderEvents :: RenderConfiguration -> IO [Event] -> CProgram
-renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
-  where 
+renderEvents conf readEs = renderGlyphsAtFront $ ST.liftIO readEs
+  where
     {-# INLINE maybeM #-}
     maybeM :: (Monad m) => (a -> m b) -> Maybe a -> m ()
-    maybeM f Nothing  = return ()
+    maybeM _ Nothing  = return ()
     maybeM f (Just x) = f x >> return ()
 
     -- Returns: whether we have any non-bars glyphs (text)
-    genGlyphs :: (UTCTime -> Double) -> Double -> [Event] -> Bool 
+    genGlyphs :: (UTCTime -> Double) -> Double -> [Event] -> Bool
                  -> (Int -> OutputGlyph -> RenderState s ())  -- Glyph
                  -> (Int -> S.ByteString -> RenderState s ()) -- Legend item
                  -> RenderState s Bool
@@ -121,8 +125,8 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
         parseTime (Event _ t track edge) = Event' (time2ms t) track edge
         genGlyphs' [] m !havePulses = when (not drawGlyphsNotBars) (mapM_ flushTrack (M.toList m)) >> return havePulses
           where
-            flushTrack (track, (i, Nothing)) = return ()
-            flushTrack (track, (i, Just (mst0,c0))) = do
+            flushTrack (_track, (_i, Nothing)) = return ()
+            flushTrack (_track, (i, Just (mst0,c0))) = do
               if ((expireTimeMs conf > 0 && rangeMs - mst0 >= expireTimeMs conf) ||
                   expireTimeMs conf == 0)
                 then withGlyph i (ExpiredBar mst0 (if expireTimeMs conf == 0
@@ -138,7 +142,7 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
               genGlyphs' es m' True
             (True, _) -> do
               genGlyphs' es m' havePulses
-            (False, Pulse glyph color) -> do
+            (False, Pulse _glyph _color) -> do
               genGlyphs' es m' True
             (False, Both duration color) -> do
               let (start, end) = if (duration > 0)
@@ -154,10 +158,10 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
                 if (mst - mst0 >= expireTimeMs conf && expireTimeMs conf > 0)
                   then withGlyph i (ExpiredBar mst0 (mst0 + expireTimeMs conf) (overrideEnd c0))
                   else withGlyph i (Bar        mst0 mst                        (overrideEnd c0))
-              let m'' = M.insert track (i, case edge of { Begin c -> Just (mst,c); End _ -> Nothing }) m'
+              let m'' = M.insert track (i, case edge of { Begin c -> Just (mst,c); _ -> Nothing }) m'
               genGlyphs' es m'' havePulses
-        
-        summon (Event' t track edge) mst m = case M.lookup track m of
+
+        summon (Event' _t track edge) mst m = case M.lookup track m of
           Just x  -> return (x, m)
           Nothing -> do
             let i = M.size m
@@ -180,11 +184,11 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
       where
         (Just a, Just b, m) = foldl' f (Nothing, Nothing, M.empty) es
         f (!minRT, !maxRT, !tracks) e = (orJust min minRT (localTime e), orJust max maxRT (localTime e), M.insert (track e) () tracks)
-        orJust f Nothing   x = Just x
+        orJust _ Nothing    x = Just x
         orJust f (Just !x0) x = Just (f x0 x)
 
     override (ft, tt, nt) = (override' ft (fromTime conf), override' tt (toTime conf), override' nt (forcedNumTracks conf))
-    override' x (Just y) = y
+    override' _ (Just y) = y
     override' x Nothing  = x
 
     render' :: C.Render [Event] -> (Double,Double) -> Bool -> C.Render Bool
@@ -202,9 +206,9 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
                     | t > maxRenderTime = rangeMs
                     | otherwise         = diffToMillis t minRenderTime
 
-      let ticks = takeWhile ((<rangeMs).snd) $ 
-            map (\i -> if i`mod`largeTickFreq conf == 0 
-                       then (LargeTick, fromIntegral i*tickIntervalMs conf) 
+      let ticks = takeWhile ((<rangeMs).snd) $
+            map (\i -> if i`mod`largeTickFreq conf == 0
+                       then (LargeTick, fromIntegral i*tickIntervalMs conf)
                        else (SmallTick, fromIntegral i*tickIntervalMs conf)) [0..]
 
       let legendW = case legendWidth conf of { Just w -> fromIntegral w; Nothing -> 0 }
@@ -225,11 +229,11 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
             map <- ST.get
             let (color, map') = computeColor map c
             ST.put map'
-            return color
+            return (toSRGB color)
 
       let drawGlyph :: Int -> OutputGlyph -> RenderState ColorMap ()
           drawGlyph !i (Bar !ms1 !ms2 !color)
-            | drawGlyphsNotBars = return () 
+            | drawGlyphsNotBars = return ()
             | otherwise = getColor color >>= \(RGB r g b) -> liftR $ do
               C.setSourceRGB r g b
               let y = track2y i
@@ -237,7 +241,7 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
                 BarHeightFixed bh -> fillRect (ms2x ms1) (y - bh   /2) (ms2x ms2) (y + bh   /2)
                 BarHeightFill     -> fillRect (ms2x ms1) (y - yStep/2) (ms2x ms2) (y + yStep/2)
 
-          drawGlyph i (ExpiredBar ms1 ms2 color) 
+          drawGlyph i (ExpiredBar ms1 ms2 color)
             | drawGlyphsNotBars = return ()
             | otherwise = getColor color >>= \(RGB r g b) -> liftR $ do
               lineStyle [3,3] $ opaque $ sRGB r g b
@@ -247,8 +251,8 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
               strokeLine (ms2x ms2 - 5) (y - 5) (ms2x ms2 + 5) (y + 5)
               strokeLine (ms2x ms2 + 5) (y - 5) (ms2x ms2 - 5) (y + 5)
 
-          drawGlyph i (OutPulse ms glyph color) 
-            | not drawGlyphsNotBars = return () 
+          drawGlyph i (OutPulse ms glyph color)
+            | not drawGlyphsNotBars = return ()
             | otherwise = getColor color >>= \(RGB r g b) -> liftR $ case glyph of
               GlyphText text -> do
                 lineStyle [] $ opaque $ sRGB r g b
@@ -280,5 +284,4 @@ renderEvents conf readEs = renderGlyphsAtFront $ liftIO readEs
 
       C.setAntialias C.AntialiasSubpixel
       let colorMap = prepareColorMap (colorWheels conf)
-      evalStateT (runRenderState $ genGlyphs time2ms rangeMs es drawGlyphsNotBars drawGlyph drawLegendItem) colorMap
-
+      ST.evalStateT (runRenderState $ genGlyphs time2ms rangeMs es drawGlyphsNotBars drawGlyph drawLegendItem) colorMap

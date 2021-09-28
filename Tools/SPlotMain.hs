@@ -1,37 +1,29 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-import Paths_splot (version)
-import Data.Version (showVersion)
-import Distribution.VcsRevision.Git
-import Language.Haskell.TH.Syntax
-
-import System.Environment (getArgs)
-import System.Exit
-
-import Data.Time
-import Data.Time.Parse
-
-import qualified Graphics.Rendering.Cairo as C
-
-import Data.Maybe(fromMaybe,isNothing)
-import Data.Ord(comparing)
-
-import Data.List (tails)
-
+import Control.Monad (when)
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as B
-import Data.ByteString.Lex.Fractional
-
-import Control.Monad (when)
-
-import Tools.StatePlot
+import Data.ByteString.Lex.Fractional (readDecimal)
+import Data.List (tails)
+import Data.Maybe (fromMaybe)
+import Data.Time (LocalTime, addUTCTime, localTimeToUTC, utc, utcToLocalTime)
+import Data.Time.Parse (strptime)
+import Data.Version (showVersion)
+import Distribution.VcsRevision.Git (getRevision)
+import qualified Graphics.Rendering.Cairo as C
+import qualified Language.Haskell.TH.Syntax as TH
+import Paths_splot (version)
+import System.Environment (getArgs)
+import System.Exit (exitSuccess)
+import Tools.StatePlot (BarHeight(..), CProgram, RenderConfiguration(..), parse, renderEvents)
 
 getArg :: String -> String -> [String] -> String
 getArg name def args = case [(k,v) | (k,v) <- zip args (tail args), k==("-"++name)] of
   (_,v):_ -> v
   _       -> def
 
+showHelp :: IO ()
 showHelp = mapM_ putStrLn [
     "splot - a tool for visualizing the lifecycle of many concurrent multi-stage processes. See http://www.haskell.org/haskellwiki/Splot",
     "Usage: splot [--help] [--version]",
@@ -91,7 +83,7 @@ showHelp = mapM_ putStrLn [
     "2010-10-21 16:45:10,631 =foo -7.35 yellow",
     "",
     "'!FOO COLOR TEXT' means 'draw text TEXT with color COLOR on track FOO',",
-    "'>FOO COLOR' means 'start a bar of color COLOR on track FOO'.", 
+    "'>FOO COLOR' means 'start a bar of color COLOR on track FOO'.",
     "'<FOO' means 'end the current bar for FOO'.",
     "'<FOO COLOR' means 'end the current bar for FOO and make the whole bar of color COLOR'",
     "(for example if we found that FOO failed and all the work since >FOO was wasted, COLOR",
@@ -104,7 +96,7 @@ showHelp = mapM_ putStrLn [
     " case splot will generate a new color for each different token.",
     "COLOR may also have the form '/SCHEME/TOKEN', in which case the colors for ",
     " tokens are cycled within colors specified by --colorscheme for SCHEME.",
-    "For example, if you have two types of threads in your program and you want them", 
+    "For example, if you have two types of threads in your program and you want them",
     " to be colored differently but do not want to assign colors to each thread ",
     " individually, you can use colors named like /pale/THREADID and /bright/THREADID",
     " and specify --colorscheme bright 'red green blue orange yellow' --colorscheme pale ",
@@ -112,16 +104,18 @@ showHelp = mapM_ putStrLn [
     "If you use an unspecified color scheme, or don't specify a color scheme at all, ",
     " the tool resorts to using a default scheme, which consists of a sequence of",
     " contrast and bright colors.",
-    "" 
+    ""
     ]
 
+showGitVersion :: String
 showGitVersion = $(do
-  v <- qRunIO getRevision
-  lift $ case v of
+  v <- TH.qRunIO getRevision
+  TH.lift $ case v of
     Nothing           -> "<none>"
     Just (hash,True)  -> hash ++ " (with local modifications)"
     Just (hash,False) -> hash)
 
+addSeconds :: Double -> LocalTime -> LocalTime
 addSeconds d t = utcToLocalTime utc (addUTCTime (fromRational $ toRational d) (localTimeToUTC utc t))
 
 cprogramToPNGFile :: CProgram -> Int -> Int -> FilePath -> IO ()
@@ -130,6 +124,7 @@ cprogramToPNGFile prog w h file = do
     C.renderWith result $ prog (fromIntegral w, fromIntegral h)
     C.surfaceWriteToPNG result file
 
+main :: IO ()
 main = do
   args <- getArgs
   when (null args || args == ["--help"]) $ showHelp >> exitSuccess
@@ -141,8 +136,8 @@ main = do
   let tickIntervalMs = read $ getArg "tickInterval" "1000" args
   let largeTickFreq = read $ getArg "largeTickFreq" "10" args
   let timeFormat = getArg "tf" "%Y-%m-%d %H:%M:%OS" args
-  let Just (ourBaseTime,_) = strptime "%Y-%m-%d %H:%M:%OS" "1900-01-01 00:00:00" 
-  let ourStrptime = if timeFormat == "elapsed" 
+  let Just (ourBaseTime,_) = strptime "%Y-%m-%d %H:%M:%OS" "1900-01-01 00:00:00"
+  let ourStrptime = if timeFormat == "elapsed"
                     then \s -> do
                       (d, s') <- readDecimal s
                       return (addSeconds d ourBaseTime, s')
@@ -162,8 +157,8 @@ main = do
 
   let readInput = if inputFile == "-" then B.getContents else B.readFile inputFile
   let readEvents = (map (parse parseTime . pruneLF) . map B.toStrict . B.lines) `fmap` readInput
-  
-  let colorMaps = [(S.pack scheme, map S.pack (words wheel)) | ("-colorscheme":scheme:wheel:_) <- tails args ] 
+
+  let colorMaps = [(S.pack scheme, map S.pack (words wheel)) | ("-colorscheme":scheme:wheel:_) <- tails args ]
 
   let pic = renderEvents (RenderConf barHeight tickIntervalMs largeTickFreq expireTimeMs phantomColor fromTime toTime forcedNumTracks colorMaps legendWidth) readEvents
   cprogramToPNGFile pic w h outPNG

@@ -1,0 +1,46 @@
+name: splot
+version: 0.3.14
+github: "jkff/splot"
+license: BSD3
+author: "Eugene Kirpichov <ekirpichov@gmail.com>"
+maintainer: "Eugene Kirpichov <ekirpichov@gmail.com>"
+copyright: "Eugene Kirpichov, 2010"
+homepage: "http://www.haskell.org/haskellwiki/Splot"
+
+extra-source-files:
+  - README
+  - TODO.txt
+
+category: Graphics
+
+synopsis: A tool for visualizing the lifecycle of many concurrent multi-staged
+  processes.
+
+description: |-
+  A tool for visualizing the lifecycle of many concurrent multi-staged
+  processes. Each process has a name, it starts at a point in time, ends at a
+  point in time, and at some points in time it changes colour. See presentation
+  <http://www.slideshare.net/jkff/two-visualization-tools> or download
+  <http://jkff.info/presentations/two-visualization-tools.pdf>.
+
+executables:
+  splot:
+    source-dirs: .
+    main: Tools/SPlotMain.hs
+    dependencies:
+      - base
+      - bytestring
+      - bytestring-lexing
+      - cairo
+      - colour
+      - containers
+      - mtl
+      - strptime
+      - template-haskell
+      - time
+      - vcs-revision
+      - HUnit
+    ghc-options:
+      - -O2
+      - -rtsopts
+      - -Wall

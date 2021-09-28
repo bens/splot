@@ -1,34 +1,55 @@
-Name: splot
-Version: 0.3.14
-License: BSD3
-License-file: LICENSE
-Copyright: Eugene Kirpichov, 2010
-Author: Eugene Kirpichov <ekirpichov@gmail.com>
-Maintainer: Eugene Kirpichov <ekirpichov@gmail.com>
-Synopsis: A tool for visualizing the lifecycle of many concurrent multi-staged processes.
-Description: A tool for visualizing the lifecycle of many concurrent multi-staged processes.
-  Each process has a name, it starts at a point in time, ends at a point in time, and at some
-  points in time it changes colour. See presentation <http://www.slideshare.net/jkff/two-visualization-tools>
-  or download <http://jkff.info/presentations/two-visualization-tools.pdf>.
-Homepage: http://www.haskell.org/haskellwiki/Splot
-Category: Graphics
-Cabal-Version: >= 1.6
-Build-Type: Simple
-Source-repository head
-  type: git
-  location: git://github.com/jkff/splot
+cabal-version: 1.12
 
-flag splitbase
-  description: Choose the new smaller, split-up base package.
+-- This file has been generated from package.yaml by hpack version 0.34.4.
+--
+-- see: https://github.com/sol/hpack
+
+name:           splot
+version:        0.3.14
+synopsis:       A tool for visualizing the lifecycle of many concurrent multi-staged processes.
+description:    A tool for visualizing the lifecycle of many concurrent multi-staged
+                processes. Each process has a name, it starts at a point in time, ends at a
+                point in time, and at some points in time it changes colour. See presentation
+                <http://www.slideshare.net/jkff/two-visualization-tools> or download
+                <http://jkff.info/presentations/two-visualization-tools.pdf>.
+category:       Graphics
+homepage:       http://www.haskell.org/haskellwiki/Splot
+bug-reports:    https://github.com/jkff/splot/issues
+author:         Eugene Kirpichov <ekirpichov@gmail.com>
+maintainer:     Eugene Kirpichov <ekirpichov@gmail.com>
+copyright:      Eugene Kirpichov, 2010
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README
+    TODO.txt
+
+source-repository head
+  type: git
+  location: https://github.com/jkff/splot
 
 executable splot
-  if flag(splitbase)
-    Build-Depends: base >= 3 && < 5
-  else
-    Build-Depends: base < 3
-
-  Build-Depends: cairo, bytestring, bytestring-lexing == 0.5.*, strptime >= 0.1.7, time, 
-                 containers, colour, mtl, HUnit, template-haskell, vcs-revision >= 0.0.2
-  Other-Modules: Tools.ColorMap Tools.SPlotTest Tools.SPlotTest Tools.StatePlot
-  Main-Is: Tools/SPlotMain.hs
-  Ghc-Options: -O2 -rtsopts
+  main-is: Tools/SPlotMain.hs
+  other-modules:
+      Tools.ColorMap
+      Tools.SPlotTest
+      Tools.StatePlot
+      Paths_splot
+  hs-source-dirs:
+      ./
+  ghc-options: -O2 -rtsopts -Wall
+  build-depends:
+      HUnit
+    , base
+    , bytestring
+    , bytestring-lexing
+    , cairo
+    , colour
+    , containers
+    , mtl
+    , strptime
+    , template-haskell
+    , time
+    , vcs-revision
+  default-language: Haskell2010
